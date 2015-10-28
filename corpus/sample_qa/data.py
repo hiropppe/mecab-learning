@@ -3,13 +3,15 @@
 
 import codecs, urllib2, sqlite3, os, textwrap, argparse, shutil, glob
 import xml.etree.ElementTree as ET
+
 from string import Template
 
-yurl = 'http://chiebukuro.yahooapis.jp/Chiebukuro/V1'
-appid = 'dj0zaiZpPWtrR2V5Tm1NSFJpYSZzPWNvbnN1bWVyc2VjcmV0Jng9MmQ-'
+import config
 
-cat_url = Template(yurl + '/categoryTree?appid=' + appid + '&categoryid=$catid')
-new_url = Template(yurl + '/getNewQuestionList?appid=' + appid + '&category_id=$catid&condition=$cond&start=$start&results=20')
+yurl = 'http://chiebukuro.yahooapis.jp/Chiebukuro/V1'
+
+cat_url = Template(yurl + '/categoryTree?appid=' + config.appid + '&categoryid=$catid')
+new_url = Template(yurl + '/getNewQuestionList?appid=' + config.appid + '&category_id=$catid&condition=$cond&start=$start&results=20')
 
 qa_ddl = """
   create table if not exists qa (
@@ -25,13 +27,15 @@ qa_conn = None
 fetch_conds = ['open', 'vote', 'solved']
 pos_category_ids = [ 2078297371 ]
 
-def open_db(qa_db):
+def open_db():
     global qa_conn
 
-    qa_conn = sqlite3.connect(qa_db, isolation_level=None)
+    if 0 < config.db_file.rfind('/'):
+        mkdir(config.db_file[:config.db_file.rfind('/')], remove=False)
+    qa_conn = sqlite3.connect(config.db_file, isolation_level=None)
     qa_conn.execute(qa_ddl)
 
-def close_db(qa_db):
+def close_db():
     global qa_conn
 
     try:
@@ -39,7 +43,7 @@ def close_db(qa_db):
     except:
         pass
 
-def fetch_qa(start_category, start_page, num_fetch_page, depth):
+def fetch(start_category, start_page, num_fetch_page, depth):
     catids = []
     fetch_target_categories(start_category, catids, depth)
     
@@ -96,14 +100,14 @@ def insert_or_replace(rs):
     
     qa_conn.execute('INSERT OR REPLACE INTO qa VALUES (?, ?, ?)', (qid, catid, content))
 
-def setup_corpus(qa_db, corpus_dir):
+def clf_gen():
     global qa_conn
 
-    tmp_dir = './tmp'
+    tmp_dir = os.path.join(config.corpus_dir, 'tmp')
     mkdir(tmp_dir)
 
     dump_qa_by_categories(tmp_dir)
-    setup_binary_class_corpus(corpus_dir, tmp_dir)
+    setup_binary_class_corpus(config.corpus_dir, tmp_dir)
 
 def setup_binary_class_corpus(corpus_dir, tmp_dir):
     pos_dir = corpus_dir + '/1'
@@ -165,36 +169,28 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=textwrap.dedent('''
-            fetch_qa: Yahoo!知恵袋生コーパス取得
+            Yahoo!知恵袋生コーパス取得
             ''')
         )
 
-    parser.add_argument('-fetch', '--fetch', help='fetch data', default=False, action='store_true')
-    parser.add_argument('-setup', '--setup', help='setup corpus', default=False, action='store_true')
+    parser.add_argument('command', metavar='COMMAND', choices=['fetch', 'clfgen'], help='fetch | clfgen')
     parser.add_argument('-s', '--start', type=int, default=1, help='start page')
     parser.add_argument('-p', '--page', type=int, default=1, help='number of fetch page')
     parser.add_argument('-t', '--depth', type=int, default=2, help='category depth')
     parser.add_argument('-c', '--category', type=int, default=0, help='start category id')
-    parser.add_argument('-b', '--dbfile', type=str, default='./qa.db', help='qa db file')
-    parser.add_argument('-d', '--corpusdir', type=str, default='.', help='qa dump directory')
     args = parser.parse_args()
     
     print 'Start to fetch Yahoo! 知恵袋データ'
     print ' Number of fetch page:', args.page
-    print ' DB:', args.dbfile
+    print ' DB:', config.db_file
 
     try:
-        open_db(args.dbfile)
+        open_db()
         
-        if args.fetch:
-            fetch_qa(args.category, args.start, args.page, args.depth)
-        else:
-            print 'Skip fetch'
-
-        if args.setup:
-            setup_corpus(args.dbfile, args.corpusdir)
-        else:
-            print 'Skip corpus setup'
+        if args.command == 'fetch':
+            fetch(args.category, args.start, args.page, args.depth)
+        elif args.command == 'clfgen':
+            clf_gen()
     
     finally:
-        close_db(args.dbfile)
+        close_db()

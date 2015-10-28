@@ -16,13 +16,11 @@ import argparse
 import textwrap
 import MeCab
 
-from os.path import join
-from os.path import abspath
-from os.path import basename
+from os.path import join, abspath, basename
 
 from bs4 import BeautifulSoup
  
-class PoCabCorpus(object):
+class SampleCorpus(object):
  
     cid_prefix = '1000000'
     dtl_prefix = 'dtl' + cid_prefix
@@ -57,6 +55,8 @@ class PoCabCorpus(object):
         self.bib_name = 'bib.csv'
         self.chaki_export_name = 'all.cabocha'
         
+        mkdir(self.corpus_dir, remove=False)
+
         if dict is None:
             mecab_opt = '-Ochasen'
         else:
@@ -83,8 +83,8 @@ class PoCabCorpus(object):
         
         print 'Done'
 
-    def fetchone(self, cid):
-        print '文書を取得します'
+    def fetch_one(self, cid):
+        print '文書情報を取得します'
 
         from_id = to_id = int(cid[len(self.cid_prefix):])
 
@@ -96,7 +96,7 @@ class PoCabCorpus(object):
 
         print '文書情報を取得しました'
 
-    def fetchlist(self, cid_list_path):
+    def fetch_list(self, cid_list_path):
         print '文書を取得します'
 
         self.open_doc_db()
@@ -666,21 +666,28 @@ class PoCabCorpus(object):
         pp = pprint.PrettyPrinter(indent=4, width=160)
         str = pp.pformat(obj)
         return re.sub(r'\\u([0-9a-f]{4})', lambda x: unichr(int('0x'+x.group(1), 16)), str) 
- 
+
+def mkdir(dir, remove=True):
+    if remove:
+        shutil.rmtree(dir, ignore_errors=True)
+    
+    if not os.path.exists(dir):
+        os.makedirs(dir)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=textwrap.dedent('''
-            docgen: MeCab再学習用のサンプルコーパスの生成ツール
+            MeCab再学習用のサンプルコーパスの生成ツール
             
             例:
-                python script/docgen.py fetch .                 # 文書の取得
-                python script/docgen.py fetch -c 100000011379 . # 文書の取得(ID指定)
-                python script/docgen.py fetch -l ./fetch.lst .  # 文書の取得(リスト指定)
-                python script/docgen.py allgen .  # コーパス生成
-                python script/docgen.py plngen .  # 平文コーパスの生成
-                python script/docgen.py -d ./dict/mecab-ipadic-2.7.0-20070801-latest taggen . # タグ付きコーパスの生成
-                python script/docgen.py -d ./dict/mecab-ipadic-2.7.0-20070801-latest cpsgen . # Chakiコーパスの更新
+                python data.py fetch .                 # 文書の取得
+                python data.py -c 100000011379 fetch . # 文書の取得(ID指定)
+                python data.py -l ./fetch.lst fetch .  # 文書の取得(リスト指定)
+                python data.py allgen .  # コーパス生成
+                python data.py plngen .  # 平文コーパスの生成
+                python data.py -d ./dict/mecab-ipadic-2.7.0-20070801-latest taggen . # タグ付きコーパスの生成
+                python data.py -d ./dict/mecab-ipadic-2.7.0-20070801-latest cpsgen . # Chakiコーパスの更新
             ''')
         )
     parser.add_argument('command', metavar='COMMAND',
@@ -694,13 +701,13 @@ if __name__ == "__main__":
                         help='解析に使用するMeCabシステム辞書')
     args = parser.parse_args()
 
-    cps = PoCabCorpus(args.corpus, args.dict)
+    cps = SampleCorpus(args.corpus, args.dict)
 
     if args.command == 'fetch':
         if not args.cid is None:
-            cps.fetchone(args.cid)
+            cps.fetch_one(args.cid)
         elif not args.cid_list is None:
-            cps.fetchlist(args.cid_list)
+            cps.fetch_list(args.cid_list)
         else:
             cps.fetch()
     elif args.command == 'allgen':
