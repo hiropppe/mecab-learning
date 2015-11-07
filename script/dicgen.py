@@ -1,12 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import sys
-reload(sys)
-sys.setdefaultencoding('utf-8')
-
 import MeCab
-import glob, codecs, os, re, shutil, subprocess, math, random, argparse, textwrap
+import sys, glob, codecs, os, re, shutil, subprocess, math, random, argparse, textwrap
 from collections import defaultdict
 from datetime import *
 from tabulate import tabulate

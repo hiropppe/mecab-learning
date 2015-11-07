@@ -681,13 +681,13 @@ if __name__ == "__main__":
             MeCab再学習用のサンプルコーパスの生成ツール
             
             例:
-                python data.py fetch .                 # 文書の取得
-                python data.py -c 100000011379 fetch . # 文書の取得(ID指定)
-                python data.py -l ./fetch.lst fetch .  # 文書の取得(リスト指定)
-                python data.py allgen .  # コーパス生成
-                python data.py plngen .  # 平文コーパスの生成
-                python data.py -d ./dict/mecab-ipadic-2.7.0-20070801-latest taggen . # タグ付きコーパスの生成
-                python data.py -d ./dict/mecab-ipadic-2.7.0-20070801-latest cpsgen . # Chakiコーパスの更新
+                python data.py fetch data                 # 文書の取得
+                python data.py -c 100000011379 fetch data # 文書の取得(ID指定)
+                python data.py -l ./fetch.lst fetch data  # 文書の取得(リスト指定)
+                python data.py allgen data  # コーパス生成
+                python data.py plngen data  # 平文コーパスの生成
+                python data.py -d ./dict/mecab-ipadic-2.7.0-20070801-latest taggen data # タグ付きコーパスの生成
+                python data.py -d ./dict/mecab-ipadic-2.7.0-20070801-latest cpsgen data # Chakiコーパスの更新
             ''')
         )
     parser.add_argument('command', metavar='COMMAND',
