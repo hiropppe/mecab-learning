@@ -7,63 +7,41 @@ from collections import defaultdict
 from datetime import *
 from tabulate import tabulate
 
-dicname_bin = 'dic'
-dicname_model = 'model'
-dicname_train = 'train'
+def dic_gen(dic, model, corpus, output, lexeme):
+    print '[GenDic] Setup seed dictionary'
+    seed = make_seed(dic, lexeme)
 
-target_dic = 'ipa'
-target_version = None
-target_corpus = None
-
-corpus_dir = None
-corpus_lex_dir = None
-corpus_corpus_dir = None
-
-dic_dir = None
-train_id = None
-train_dir = None
-train_dir_dic_org = None
-train_dir_model_org = None
-train_dir_corpus = None
-train_dir_model = None
-train_dir_dic = None
-
-def train(dicdir, dicname, version, corpus):
-    print '[GenDic] Train {} dictionary ({}) using latest {} corpus'.format(dicname, version, corpus)
-    init_train_env(dicdir, dicname, version, corpus)
-    gen_train_base_dict()
-    run_cross_train_and_eval()
-    release_dict()
-
-def gen_train_base_dict():
-    print '[GenDic] Generate train base dictionary ...'
-    copy_original_dic_and_model(train_dir_dic_org, train_dir)
-    copy_add_lexes(train_dir_dic_org)
-    mecab_dict_index(train_dir_dic_org, train_dir_dic_org)
-
-def run_cross_train_and_eval():
-    print '[GenDic] Run cross train and evaluation ...'
-    eval_dirs = setup_cross_train_source()
-    for eval_dir in eval_dirs:
-        train_and_eval(eval_dir)
-    print_system_eval_average(eval_dirs)
-
-def train_and_eval(eval_dir):
-    print '[GenDic] Eval ' + eval_dir
-
-    train_corpus = eval_dir + '/train'
-    test_answer = eval_dir + '/test'
-    test_plain = eval_dir + '/test.plain'
-    test_result = eval_dir + '/test.result'
-    test_score = eval_dir + '/score'
-    new_model = eval_dir + '/' + target_version + '.model'
-    new_dic = eval_dir + '/' + target_version
+    print '[GenDic] Build binary seed dictionary'
+    mecab_dict_index(seed)
     
-    mecab_cost_train(train_dir_model_org, train_dir_dic_org, train_corpus, new_model)
-    mecab_dict_gen(train_dir_dic_org, new_model, new_dic)
-    mecab_dict_gen_index(new_dic, new_dic)
-    mecab_parse(new_dic, test_plain, test_result)
-    mecab_system_eval(test_result, test_answer, test_score)
+    print '[GenDic] Train CRF model'
+    new_model = '.'.join([output, 'model'])
+    mecab_cost_train(model, seed, corpus, new_model, c="1.0")
+    
+    print '[GenDic] Generate distribution dictionary'
+    mecab_dict_gen(seed, new_model, output)
+    
+    print '[GenDic] Build binary dictionary'
+    mecab_dict_index(output)
+
+def make_seed(dic, lexeme):
+    seed = os.path.join(tmp, os.path.basename(dic))
+    os.makedirs(seed)
+
+    files = glob.glob(os.path.join(dic, '*'))
+    for f in [f for f in files if f.endswith('.csv') or f.endswith('.def') or os.path.basename(f) == 'dicrc']:    
+        shutil.copy2(f, seed)
+
+    if not lexeme is None:
+        if os.path.isfile(lexeme):
+            shutil.copy2(lexeme, seed)
+        elif os.path.isdir(lexeme):
+            for csv in glob.glob(os.path.join(lexeme, '*.csv')):
+                shutil.copy2(csv, seed)
+        else:
+            pass
+
+    return seed
 
 def mecab_system_eval(result, answer, score):
     args = ['mecab-system-eval', '-l', '"0 1 2"', result, answer]
@@ -175,30 +153,8 @@ def gen_test_corpus(src, dst):
                         fo.write(''.join(sent) + '\n')
                     del sent[:]
 
-def release_dict():
-    gen_release_dict()
-    deploy_release_dict()
-
-def gen_release_dict():
-    print '[GenDic] Generate release dictionary ...'
-    setup_release_train()
-    
-    mecab_cost_train(train_dir_model_org, train_dir_dic_org, train_dir_corpus, train_dir_model)
-    print 'New Model {} generated !'.format(train_dir_model)
-    
-    mecab_dict_gen(train_dir_dic_org, train_dir_model, train_dir_dic)
-    mecab_dict_gen_index(train_dir_dic, train_dir_dic)
-    print 'New Dictionary {} generated !'.format(train_dir_dic)
-
-def deploy_release_dict():
-    print '[GenDic] Deploy new dictionary'
-    release_path = target_corpus + '/dic/mecab-' + target_dic + 'dic-' + target_version + '-latest'
-    if os.path.exists(release_path):
-        shutil.rmtree(release_path)
-    shutil.copytree(train_dir_dic, release_path)
-
 def call_mecab(args, name, fail_on_err=True):
-    print '[MeCab] {} ...'.format(name)
+    print '[MeCab] {}'.format(args)
     p = subprocess.Popen(' '.join(args),
             shell=True,
             stdout=subprocess.PIPE,
@@ -210,11 +166,14 @@ def call_mecab(args, name, fail_on_err=True):
         if stderr:
             print stderr
         if fail_on_err:
-            raise Exception('{} failed !'.format(name))
+            raise Exception('{} failed !'.format(args[0]))
 
     return (p.returncode, stdout, stderr)
 
-def mecab_dict_index(dic, out):
+def mecab_dict_index(dic, out=None):
+    if out == None:
+        out = dic
+    
     args = ['mecab-dict-index',
         '-d', dic,
         '-o', out,
@@ -222,96 +181,31 @@ def mecab_dict_index(dic, out):
         '-f', 'utf-8']
     call_mecab(args, 'mecab-dict-index')
 
-def mecab_cost_train(model, dict, corpus, new_model):
+def mecab_cost_assign(model, dic, input, output):
+    args = ['mecab-dict-index',
+        '-m', model,
+        '-d', dic,
+        '-a', input,
+        '-u', output,
+        '-t', 'utf-8',
+        '-f', 'utf-8']
+    call_mecab(args, 'mecab-dict-index')
+
+def mecab_cost_train(model, dic, corpus, new_model, c="1.0"):
     args = ['mecab-cost-train', 
         '-M', model, 
-        '-d', dict, 
+        '-d', dic,
+        '-c', c,
         corpus, new_model]
     call_mecab(args, 'mecab-cost-train')
 
-def mecab_dict_gen(dic, model, new_dic):
-    os.mkdir(new_dic)
-    shutil.copy(train_dir_dic_org + '/dicrc', new_dic)
-    shutil.copy(train_dir_dic_org + '/pos-id.def', new_dic)
+def mecab_dict_gen(dic, model, output):
+    os.makedirs(output)
     args = ['mecab-dict-gen',
         '-d', dic,
-        '-o', new_dic,
+        '-o', output,
         '-m', model]
     call_mecab(args, 'mecab-dict-gen')
-
-def mecab_dict_gen_index(dic, out):
-    args = ['mecab-dict-index',
-        '-d', dic,
-        '-o', out,
-        '-t', 'utf-8',
-        '-f', 'utf-8']
-    call_mecab(args, 'mecab-dic-index')
-
-def setup_release_train():
-    print ' Train directory ' + train_dir 
-    
-    global train_dir_corpus
-    global train_dir_model
-    global train_dir_dic
-    
-    train_dir_corpus = train_dir + '/train'
-    train_dir_model = train_dir_model_org + '.train'
-    train_dir_dic = train_dir_dic_org + '.gen'
-   
-    docs = [os.path.basename(f) for f in glob.glob(corpus_corpus_dir + '/*.cabocha')]
-    gen_corpus(docs, train_dir_corpus)
-
-def copy_original_dic_and_model(dst_dic, dst_model):
-    original_dic = dic_dir + '/dic/' + target_version
-    original_model = dic_dir + '/model/' + target_version + '.model'
-    shutil.copytree(original_dic, dst_dic)
-    shutil.copy(original_model, dst_model)
-
-def copy_train_dic_and_model(dst_dic, dst_model):
-    shutil.copytree(train_dir_dic_org, dst_dic)
-    shutil.copy(train_dir_model_org, dst_model)
-
-def init_train_env(dicdir, dicname, dicver, corpus):
-    global mecab_env
-    mecab_env = os.environ.copy()
-    mecab_env['PATH'] = '/usr/local/libexec/mecab:' + mecab_env.get('PATH', '')
-    
-    global target_dic
-    global target_version
-    global target_corpus
-    global dic_dir
-    global corpus_dir
-    global corpus_lex_dir
-    global corpus_corpus_dir
-    global train_id
-    global train_dir
-    global train_dir_dic_org
-    global train_dir_model_org
-
-    target_dic = dicname
-    target_version = dicver
-    target_corpus = corpus
-
-    corpus_dir = corpus
-    corpus_lex_dir = corpus_dir + '/mecab/dict'
-    corpus_corpus_dir = corpus_dir + '/mecab/learn'
-
-    dic_dir = dicdir + '/' + dicname + '/' + dicver
-    train_id = datetime.now().strftime('%Y%m%d%H%M%S')
-    train_dir = dic_dir + '/' + dicname_train + '/' + train_id
-    train_dir_dic_org = train_dir + '/' + dicver
-    train_dir_model_org = train_dir_dic_org + '.model'
-    
-    print ' Target dictionary ' + dic_dir
-    print ' Target Corpus ' + corpus_dir
-    print ' Train directory ' + train_dir
-
-    os.mkdir(train_dir)
-
-def copy_add_lexes(dst):
-    files = glob.glob(corpus_lex_dir + '/*.csv')
-    for f in files:
-        shutil.copy(os.path.abspath(f), dst) 
 
 def gen_corpus(doc_names, dst):
     with codecs.open(dst, 'a', 'utf-8') as fo:
@@ -321,6 +215,9 @@ def gen_corpus(doc_names, dst):
                     if not line.startswith('* '):
                         fo.write(line)
 
+def eval_dic(eval_corpus):
+    pass
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -328,21 +225,34 @@ if __name__ == '__main__':
             dicgen: MeCab辞書の再学習ヘルプツール
         
             例: IPA辞書(2.7.0-20070801)をコーパスを使用して再学習させる
-                python script/dicgen.py dic/ ipa 2.7.0-20070801 corpus/sample_doc/
+                python script/dicgen.py mecab-ipadic-2.7.0-20070801 mecab-ipadic-2.7.0-20070801.model corpus myipadic -l lexeme
         ''')
         )
-    parser.add_argument('dic_dir', metavar='DICTIONARY DIRECTORY',
-                        nargs='?', help='辞書管理ルートディレクトリ')
-    parser.add_argument('dic_name', metavar='DICTIONARY NAME',
-                        nargs='?', help='ターゲット辞書名')
-    parser.add_argument('dic_version', metavar='DICTIONARY VERSION',
-                        nargs='?', help='ターゲット辞書バージョン')
-    parser.add_argument('corpus_dir', metavar='CORPUS DIRECTORY',
-                        nargs='?', help='ターゲットコーパスディレクトリ')
+    parser.add_argument('dic', metavar='DIC', nargs='?', help='辞書')
+    parser.add_argument('model', metavar='MODEL', nargs='?', help='CRFモデル')
+    parser.add_argument('corpus', metavar='CORPUS', nargs='?', help='コーパス')
+    parser.add_argument('output', metavar='OUTPUT_DIC', nargs='?', help='出力辞書')
+    parser.add_argument('-l', '--lexeme', help='追加単語')
+    parser.add_argument('-e', '--eval-corpus', help='評価用コーパス')
+    parser.add_argument('-t', '--tmp', help='一時ディレクトリ')
     args = parser.parse_args()
 
-    if args.dic_dir is None or args.dic_name is None or args.dic_version is None or args.corpus_dir is None:
+    if args.dic is None or args.model is None or args.corpus is None or args.output is None:
         parser.print_usage()
         sys.exit(0)
+    
+    global mecab_env
+    mecab_env = os.environ.copy()
+    mecab_env['PATH'] = '/usr/local/libexec/mecab:' + mecab_env.get('PATH', '')
+    
+    global tmp
+    tmp = args.tmp
+    if tmp is None:
+        tmp = os.path.join('.tmp', '_'.join(['train', datetime.now().strftime('%Y%m%d%H%M%S')]))
+    os.makedirs(tmp)
 
-    train(args.dic_dir, args.dic_name, args.dic_version, args.corpus_dir)
+    dic_gen(args.dic, args.model, args.corpus, args.output, args.lexeme)
+
+    if not args.eval_corpus is None:
+        eval_dic(args.eval_corpus)
+
