@@ -7,22 +7,38 @@ from collections import defaultdict
 from datetime import *
 from tabulate import tabulate
 
-def dic_gen(dic, model, corpus, output, lexeme):
-    print '[GenDic] Setup seed dictionary'
+def gen_dic(dic, model, corpus, output, lexeme):
+    print '[DicGen] Setup seed dictionary'
     seed = make_seed(dic, lexeme)
 
-    print '[GenDic] Build binary seed dictionary'
+    print '[DicGen] Build binary seed dictionary'
     mecab_dict_index(seed)
     
-    print '[GenDic] Train CRF model'
+    print '[DicGen] Train CRF model'
     new_model = '.'.join([output, 'model'])
-    mecab_cost_train(model, seed, corpus, new_model, c="1.0")
+    mecab_cost_train(model, seed, corpus, new_model)
     
-    print '[GenDic] Generate distribution dictionary'
+    print '[DicGen] Generate distribution dictionary'
     mecab_dict_gen(seed, new_model, output)
     
-    print '[GenDic] Build binary dictionary'
+    print '[DicGen] Build binary dictionary'
     mecab_dict_index(output)
+
+def eval_dic(test_corpus, dic):
+    test_answer = os.path.join(tmp, 'test.answer')
+    test_input = os.path.join(tmp, 'test.input')
+    test_output = os.path.join(tmp, 'test.output')
+    
+    with codecs.open(test_answer, 'w', 'utf-8') as outfile:
+        for f in glob.glob(os.path.join(test_corpus, '*')):
+            with codecs.open(f, 'r', 'utf-8') as infile:
+                outfile.write(infile.read())
+    
+    gen_plain_corpus(test_answer, test_input)
+    
+    mecab_parse(dic, test_input, test_output)
+
+    mecab_system_eval(test_output, test_answer, os.path.join(tmp, 'score'))
 
 def make_seed(dic, lexeme):
     seed = os.path.join(tmp, os.path.basename(dic))
@@ -43,132 +59,32 @@ def make_seed(dic, lexeme):
 
     return seed
 
-def mecab_system_eval(result, answer, score):
-    args = ['mecab-system-eval', '-l', '"0 1 2"', result, answer]
-    result = call_mecab(args, 'mecab-system-eval', False)
-    print result[1]
-    with codecs.open(score, 'w', 'utf-8') as f:
-        f.write(result[1])
-
-def print_system_eval_average(eval_dirs):
-    print 'Average Score:'
-    level_results = defaultdict(lambda: defaultdict(lambda: []))
-    for dir in eval_dirs:
-        with codecs.open(dir + '/score', 'r', 'utf-8') as f:
-            for lr in parse_mecab_system_eval(f):
-                level_results[lr[0]]['p'].append(lr[1]) # precision
-                level_results[lr[0]]['r'].append(lr[2]) # recall
-                level_results[lr[0]]['f'].append(lr[3]) # F
-
-    table = []
-    for level in sorted(level_results.keys()):
-        score_map = level_results[level]
-        p = score_map['p']
-        r = score_map['r']
-        f = score_map['f']
-        table.append(['LEVEL ' + level, sum(p)/len(p), sum(r)/len(r), sum(f)/len(f)])
-
-    print tabulate(table, headers=['', 'precition', 'recall', 'F'])
-
-def parse_mecab_system_eval(score_file):
-    level_lst = []
-    skip_header = False
-    for line in score_file:
-        if skip_header:
-            cols = re.split(r'\s+', line)
-            level = get_level(cols[1])
-            precision =  get_score(cols[2])
-            recall = get_score(cols[3])
-            f = float(cols[4])
-            level_lst.append((level, precision, recall, f))
-        else:
-            skip_header = True
-    return level_lst
-
-def get_level(level):
-    return level[0:len(level)-1]
-
-def get_score(score):
-    return float(score[0:score.index('(')])
-
-def mecab_parse(dic, text_file, result_file):
-    mecab = MeCab.Tagger('-Ochasen -d ' + dic)
-    with codecs.open(text_file, 'r', 'utf-8') as fi:
-        with codecs.open(result_file, 'w', 'utf-8') as fo:
-            for s in fi:
-                encoded_text = s.encode('utf-8')
-                node = mecab.parseToNode(encoded_text)
-                node = node.next
-                while node:
-                    if node.feature.split(',')[0] == 'BOS/EOS':
-                        fo.write('EOS\n')
-                    else:
-                        fo.write(node.surface + '\t' + node.feature + '\n')
-                    node = node.next
-
-def setup_cross_train_source():
-    train_cross_dir = train_dir + '/cross'
-    os.mkdir(train_cross_dir)
-
-    n = 0
-    files = glob.glob(corpus_corpus_dir + '/*.cabocha')
-    docs = []
-    for f in files:
-        docs.append(os.path.basename(f))
-        n += 1
-
-    random.shuffle(docs)
-    
-    k = (int)(1 + math.log(n)/math.log(2))
-    d = n/k
-   
-    eval_dirs = []
-    for i in range(k):
-        eval_dir = train_cross_dir + '/eval-' + `i`
-        eval_dirs.append(eval_dir)
-        os.mkdir(eval_dir)
-
-        test_docs = docs[i*d:(i+1)*d]
-        train_docs = list(set(docs) - set(test_docs))
-
-        setup_each_cross_train(train_docs, test_docs, eval_dir)    
-    
-    return eval_dirs
-
-def setup_each_cross_train(train_docs, test_docs, eval_dir):
-    gen_corpus(train_docs, eval_dir + '/train')
-    gen_corpus(test_docs, eval_dir + '/test')
-    gen_test_corpus(eval_dir + '/test', eval_dir + '/test.plain')
-
-def gen_test_corpus(src, dst):
+def gen_plain_corpus(src, dst):
     with codecs.open(src, 'r', 'utf-8') as fi:
         with codecs.open(dst, 'w', 'utf-8') as fo: 
             sent = []
             for lex in fi:
                 if not lex.startswith('*') and re.match(r'^EOS\s*$', lex) is None:
-                #if re.match(r'EOS\s*$', lex) == None:
                     sent.append(lex[0:lex.index('\t')])
                 else:
                     if sent:
                         fo.write(''.join(sent) + '\n')
                     del sent[:]
 
-def call_mecab(args, name, fail_on_err=True):
-    print '[MeCab] {}'.format(args)
-    p = subprocess.Popen(' '.join(args),
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=mecab_env)
-    stdout, stderr = p.communicate()
-    
-    if p.returncode != 0:
-        if stderr:
-            print stderr
-        if fail_on_err:
-            raise Exception('{} failed !'.format(args[0]))
-
-    return (p.returncode, stdout, stderr)
+def mecab_parse(dic, text_file, result_file):
+    mecab = MeCab.Tagger('-Ochasen -d {}'.format(dic))
+    with codecs.open(result_file, 'w', 'utf-8') as outfile:
+        with codecs.open(text_file, 'r', 'utf-8') as infile:
+            for sent in infile:
+                encoded_text = sent.encode('utf-8')
+                node = mecab.parseToNode(encoded_text)
+                node = node.next
+                while node:
+                    if node.feature.split(',')[0] == 'BOS/EOS':
+                        outfile.write('EOS\n')
+                    else:
+                        outfile.write(node.surface.decode('utf-8') + '\t' + node.feature.decode('utf-8') + '\n')
+                    node = node.next
 
 def mecab_dict_index(dic, out=None):
     if out == None:
@@ -207,16 +123,30 @@ def mecab_dict_gen(dic, model, output):
         '-m', model]
     call_mecab(args, 'mecab-dict-gen')
 
-def gen_corpus(doc_names, dst):
-    with codecs.open(dst, 'a', 'utf-8') as fo:
-        for doc in doc_names:
-            with codecs.open(corpus_corpus_dir + '/' + doc, 'r', 'utf-8') as fi:
-                for line in fi:
-                    if not line.startswith('* '):
-                        fo.write(line)
+def mecab_system_eval(result, answer, score):
+    args = ['mecab-system-eval', '-l', '"0 1 2"', result, answer]
+    result = call_mecab(args, 'mecab-system-eval', False)
+    with codecs.open(score, 'w', 'utf-8') as f:
+        f.write(result[1])
 
-def eval_dic(eval_corpus):
-    pass
+def call_mecab(args, name, fail_on_err=True):
+    print '[MeCab] {}'.format(args)
+    p = subprocess.Popen(' '.join(args),
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=mecab_env)
+    stdout, stderr = p.communicate()
+    
+    if p.returncode != 0:
+        if stderr:
+            print stderr
+        if fail_on_err:
+            raise Exception('{} failed !'.format(args[0]))
+
+    print stdout
+
+    return (p.returncode, stdout, stderr)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -233,7 +163,7 @@ if __name__ == '__main__':
     parser.add_argument('corpus', metavar='CORPUS', nargs='?', help='コーパス')
     parser.add_argument('output', metavar='OUTPUT_DIC', nargs='?', help='出力辞書')
     parser.add_argument('-l', '--lexeme', help='追加単語')
-    parser.add_argument('-e', '--eval-corpus', help='評価用コーパス')
+    parser.add_argument('-e', '--test-corpus', help='評価用コーパス')
     parser.add_argument('-t', '--tmp', help='一時ディレクトリ')
     args = parser.parse_args()
 
@@ -251,8 +181,8 @@ if __name__ == '__main__':
         tmp = os.path.join('.tmp', '_'.join(['train', datetime.now().strftime('%Y%m%d%H%M%S')]))
     os.makedirs(tmp)
 
-    dic_gen(args.dic, args.model, args.corpus, args.output, args.lexeme)
+    gen_dic(args.dic, args.model, args.corpus, args.output, args.lexeme)
 
-    if not args.eval_corpus is None:
-        eval_dic(args.eval_corpus)
+    if not args.test_corpus is None:
+        eval_dic(args.test_corpus, args.output)
 
